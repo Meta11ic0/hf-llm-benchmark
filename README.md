@@ -1,12 +1,13 @@
-# HF LLM Benchmark — Step 1：HuggingFace Transformers LLM 推理基础
+# HF LLM Benchmark — AI Infra 实战学习项目
 
-> 来源：[AI Infra 项目实战计划](https://github.com/Meta11ic0/hf-llm-benchmark) Step 1
+> 目标：用最小成本（纯 CPU、单机）获得 LLM 推理工程的底层手感。
+> 这不是一个"跑通的 demo"，而是一份能拿去面试讲清楚的实战经历。
 >
-> 定位：用最小成本获得 LLM 工程的底层手感——这是后续 FastAPI 服务化、RAG、vLLM 的共同地基。
+> 学习笔记见 [LEARN.md](LEARN.md)——所有实验过程、数据、结论都在里面。
 
 ---
 
-## 新机器环境准备（3 步跑起来）
+## 新机器从零跑起来（4 步）
 
 ```bash
 # 1. 克隆 + 虚拟环境
@@ -17,24 +18,18 @@ source venv/bin/activate
 
 # 2. 配置国内镜像（国内网络必需！）
 export HF_ENDPOINT=https://hf-mirror.com
-# 建议把这一行加到 ~/.bashrc 或 ~/.zshrc
+# 建议加入 ~/.bashrc 持久化
 
 # 3. 安装依赖（先装 torch CPU 版，再装其他）
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
-# 4. 验证
+# 4. 验证环境
 python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
+# 输出 CPU only: True ✅
 ```
 
-> **注意**：模型文件（~1.5GB）首次运行时会自动下载到 `~/.cache/huggingface/`。
-> 如果已经有模型缓存，可以直接拷贝到新机器的相同路径。
-
----
-
-## 目标
-
-用 HuggingFace Transformers 加载 Qwen3-0.6B 和 Llama-3.2-1B 两个大语言模型，深入理解分词器、生成流程、参数影响、量化效果，编写 benchmark 脚本测量推理性能。
+模型文件（~1.4GB）首次使用 `AutoModel.from_pretrained()` 或 `snapshot_download()` 时自动下载到 `~/.cache/huggingface/`。
 
 ---
 
@@ -42,27 +37,30 @@ python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
 
 | 组件 | 选择 | 原因 |
 |------|------|------|
-| 主模型 | Qwen3-0.6B-Instruct（~1.2GB） | 2026 主流开源，Apache 2.0 协议，CPU 友好 |
-| 对比模型 | Llama-3.2-1B-Instruct（~2.5GB） | Meta 开源，不同 tokenizer 体系（BPE vs 中文优化），展示多样性 |
-| 框架 | HuggingFace Transformers | 行业标准 |
-| 精度 | FP32 + 8-bit（BitsAndBytesConfig） | CPU 推理默认 + 量化入门 |
-| 模型下载 | HF Mirror (`hf-mirror.com`) | 国内网络必需 |
-| 语言 | Python 3.10+ | 岗位要求 |
+| 模型 | Qwen3-0.6B（~1.4GB） | Apache 2.0 协议，CPU 可跑，中文友好 |
+| 框架 | HuggingFace Transformers | 行业标准，`AutoModel` / `AutoTokenizer` 统一接口 |
+| 精度 | FP32 + 8-bit（bitsandbytes） | 先跑通再量化，对比学习 |
+| 设备 | 纯 CPU（WSL2 / 13GB RAM） | 无需 GPU，降低硬件门槛 |
+| 镜像 | HF Mirror (`hf-mirror.com`) | 国内网络必需 |
+
+> **关于对比模型**：原计划包含 Llama-3.2-1B，但该模型需要 HuggingFace 账号授权，暂未获取。Qwen3-0.6B 已能覆盖所有学习目标。后续获取授权后可追加对比实验。
 
 ---
 
-## 详细任务清单
+## 学习路线（8 步）
 
-| # | 任务 | 内容 | 预计 |
-|---|------|------|------|
-| 1.1 | 环境准备 | 创建项目，git init，虚拟环境，配置 HF Mirror，安装依赖。**注意用 CPU 版 PyTorch** | 0.5h |
-| 1.2 | 模型下载与文件结构 | 下载 Qwen3-0.6B-Instruct → 理解 `config.json` / `tokenizer.json` / `model.safetensors` / `*.safetensors.index.json`。对比两模型 config 差异 | 1.5h |
-| 1.3 | 分词器入门 | Qwen3 tokenizer → tokenize 中英文示例 → 理解 input_ids / attention_mask / 特殊 token → **对比 Llama tokenizer**（BPE 体系差异、同一句中文的 token 数差异） | 2h |
-| 1.4 | 单次推理跑通 | 加载 Qwen3 → `tokenizer.apply_chat_template()` → `model.generate()` → decode，打通完整推理流程。再切换到 Llama 跑同一条 prompt | 1h |
-| 1.5 | 生成参数实验 | Qwen3 上系统对比：① temperature(0.1/0.7/1.5) ② top_p(0.5/0.9/1.0) ③ max_new_tokens(32/128/512) ④ do_sample(True/False)。记录每组输出质量和 tokens/s | 3h |
-| 1.6 | 8-bit 量化实验 | 用 `BitsAndBytesConfig(load_in_8bit=True)` 加载 Qwen3 → 对比 FP32 vs INT8：模型加载内存、推理速度、输出质量 → 理解用精度换显存/内存 | 1.5h |
-| 1.7 | Benchmark 脚本 | 准备 10-15 条不同长度 prompt（短问答/中篇总结/长文分析）→ 预热 10 次 → 每条 10 次取统计 → 两模型分别跑 → 输出 avg/P50/P99 延迟 + tokens/s + 生成 token 数 | 3h 编码 + ~5h wall clock |
-| 1.8 | 结果整理 + 提交 | README（项目目的+环境+镜像配置+核心结果）+ 两模型对比表 + 量化对比表 | 1h |
+| # | 任务 | 学什么 | 状态 |
+|---|------|--------|------|
+| 1.1 | 环境准备 | venv 隔离、CPU 版 PyTorch、HF Mirror 镜像 | ✅ |
+| 1.2 | 模型下载与文件结构 | config.json 解读、参数量估算（0.6B 怎么算出来的）、safetensors 权重格式 | ✅ |
+| 1.3 | 分词器入门 | encode/decode 原理、中英 token 效率对比、chat_template、prompt injection | ✅ |
+| 1.4 | 单次推理跑通 | 4 步 pipeline（template → tokenize → generate → decode）、自回归循环机制 | ✅ |
+| 1.5 | 生成参数实验 | temperature / top_p / max_new_tokens / do_sample 对输出质量和速度的影响 | ✅ |
+| 1.6 | 8-bit 量化实验 | FP32 vs INT8 内存/速度/质量 trade-off | ⬜ |
+| 1.7 | Benchmark 压测 | 多 prompt × 多轮统计、P50/P99 延迟、结果可复现设计 | ⬜ |
+| 1.8 | 结果整理 + 提交 | 完整对比表、LEARN.md 定稿、push | ⬜ |
+
+详细实验过程、数据和面试要点见 [LEARN.md](LEARN.md)。
 
 ---
 
@@ -70,34 +68,29 @@ python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
 
 ```
 hf-llm-benchmark/
-├── README.md                      # 项目说明 + benchmark 结果
-├── requirements.txt
-├── benchmark.py                   # 核心 benchmark（支持 --model 参数）
-├── explore_tokenizer.py           # 分词器实验（两模型对比）
-├── explore_params.py              # 生成参数实验
-├── explore_quantization.py        # 8-bit 量化对比
-└── results/
-    └── report.md
+├── README.md           # 项目概览 + 快速开始
+├── LEARN.md            # ⭐ 学习笔记（主要产出——所有实验+分析+面试准备）
+├── requirements.txt    # Python 依赖列表
+├── results/            # 实验原始数据（JSON）
+│   └── param_sweep.json
+└── (后续) benchmark.py # 自写的压测脚本（任务 1.7）
 ```
 
 ---
 
 ## 验收标准
 
-- [ ] `python benchmark.py --model qwen` 一键运行
-- [ ] 理解 tokenizer 的 chat_template 和特殊 token
-- [ ] 能解释 temperature / top_p 的影响
-- [ ] 能说出 Qwen3 和 Llama tokenizer 的一个具体差异（如中文切分方式）
-- [ ] 量化实验：INT8 内存降幅有具体数字
-- [ ] 报告包含两个模型的 avg/P50/P99 延迟和 tokens/s
+- [ ] 能解释 `model.generate()` 内部的自回归循环
+- [ ] 能说出 temperature 和 top_p 的区别，以及它们为什么不影响推理速度
+- [ ] 能从 config.json 估算模型参数量（面试高频题）
+- [ ] 量化实验：FP32 vs INT8 内存降幅有具体数字
+- [ ] Benchmark 输出 avg/P50/P99 延迟 + tokens/s
+- [ ] LEARN.md 记录了全部实验过程和结论
 
 ---
 
-## 执行提示
+## 运行提示
 
-**CPU benchmark 太慢怎么办。** Qwen3-0.6B 在普通笔记本 CPU 上约 2-5 tokens/s，生成 512 token 需要 1-3 分钟。完整 benchmark 约 300 次推理 ≈ 5 小时 wall clock。建议首次降采样：10 prompt × 5 次 = 50 次，先出数据，完整版挂一晚上跑。
+**CPU 推理速度预期。** Qwen3-0.6B 在普通笔记本 CPU（WSL2）上约 10-13 tokens/s。生成 512 token 约需 40-50 秒。完整 benchmark（10 prompt × 10 轮 = 100 次推理）约需 20-30 分钟。
 
-**tokenizer 对比抓住一个点。** Qwen3 和 Llama tokenizer 对中文的处理差异最容易观察——同一句中文，Llama 的 token 数通常是 Qwen3 的 1.5-2 倍（因为 Llama 的 BPE 词表以英文为主）。把这个对比数字写进报告，面试时一句话就能展示"我理解 tokenizer 对推理成本和速度的影响"。
-
-**量化实验注意。** `BitsAndBytesConfig(load_in_8bit=True)` 在纯 CPU 环境下可能需要额外配置（默认依赖 CUDA）。如果遇到报错，备选方案：① 改 `torch_dtype=torch.float16` 加载 ② 不改代码，用模型权重文件大小推算理论内存差异（FP32 ≈ 参数数 × 4 字节，INT8 ≈ 参数数 × 1 字节）。
-
+**量化实验注意。** `bitsandbytes` 的 8-bit 量化在纯 CPU 环境下可能需要额外配置（默认依赖 CUDA）。遇到报错时，可先用模型权重文件大小推算理论差异（FP32 ≈ 参数数 × 4 字节，INT8 ≈ 参数数 × 1 字节），后续在 GPU 环境验证。
