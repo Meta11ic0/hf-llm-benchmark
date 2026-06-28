@@ -1,9 +1,9 @@
-# HF LLM Benchmark — AI Infra 实战学习项目
+# HF LLM Benchmark — LLM 服务化前置学习项目
 
-> 目标：用最小成本（纯 CPU、单机）获得 LLM 推理工程的底层手感。
+> 目标：用最小成本（纯 CPU、单机）获得 LLM 推理工程的底层手感，为后续 LLM 流式服务化做准备。
 > 这不是一个"跑通的 demo"，而是一份能拿去面试讲清楚的实战经历。
 >
-> 学习笔记见 [LEARN.md](LEARN.md)——所有实验过程、数据、结论都在里面。
+> 当前执行手册见 [LEARN.md](LEARN.md)——包含 Step 0 ownership recovery、最小推理重写、tokenizer/generate/benchmark 的操作指引。
 
 ---
 
@@ -47,18 +47,19 @@ python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
 
 ---
 
-## 学习路线（8 步）
+## 当前执行路线（v9）
 
 | # | 任务 | 学什么 | 状态 |
 |---|------|--------|------|
+| 0 | Ownership Recovery | 盘点已有内容、最小重写、确认哪些代码自己能讲清 | ⬜ |
 | 1.1 | 环境准备 | venv 隔离、CPU 版 PyTorch、HF Mirror 镜像 | ✅ |
 | 1.2 | 模型下载与文件结构 | config.json 解读、参数量估算（0.6B 怎么算出来的）、safetensors 权重格式 | ✅ |
 | 1.3 | 分词器入门 | encode/decode 原理、中英 token 效率对比、chat_template、prompt injection | ✅ |
 | 1.4 | 单次推理跑通 | 4 步 pipeline（template → tokenize → generate → decode）、自回归循环机制 | ✅ |
 | 1.5 | 生成参数实验 | temperature / top_p / max_new_tokens / do_sample 对输出质量和速度的影响 | ✅ |
-| 1.6 | 8-bit 量化实验 | FP32 vs INT8 内存/速度/质量 trade-off | ⬜ |
-| 1.7 | Benchmark 压测 | 多 prompt × 多轮统计、P50/P99 延迟、结果可复现设计 | ⬜ |
-| 1.8 | 结果整理 + 提交 | 完整对比表、LEARN.md 定稿、push | ⬜ |
+| 1.6 | 最小 Benchmark | 先做 3 prompt × 3 次，确认统计逻辑能讲清 | ⬜ |
+| 1.7 | 量化实验 / 理论推算 | FP32 vs INT8 内存差异，CPU 不硬卡 bitsandbytes | ⬜ |
+| 1.8 | 结果整理 | README + LEARN.md + ownership 笔记 | ⬜ |
 
 详细实验过程、数据和面试要点见 [LEARN.md](LEARN.md)。
 

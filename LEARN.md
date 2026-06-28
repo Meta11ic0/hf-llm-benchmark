@@ -1,6 +1,178 @@
 # Step 1 学习笔记：HuggingFace Transformers LLM 推理基础
 
-> 学习日期：2026-06-22 | 模型：Qwen3-0.6B | 设备：CPU (WSL2, 13GB RAM)
+> 学习日期：2026-06-22 | 最近更新：2026-06-28 | 模型：Qwen3-0.6B | 设备：CPU (WSL2, 13GB RAM)
+
+---
+
+## 当前操作指引（v9）
+
+### 为什么要重排？
+
+这个仓库原本是 `ai-infra-project-plan.md` 的 Step 1：HF Transformers LLM 推理基础。
+
+但最新计划已经修正为「AI 工程落地 / LLM 服务化」路线，所以本仓库现在的定位不是「把脚本跑完」，而是：
+
+1. 夺回 ownership：确认哪些代码和流程是我能解释、能重写的。
+2. 建立最小推理链路：prompt → chat_template → input_ids → generate → decode。
+3. 得到可讲的 benchmark 结果：avg / P50 / P99 / tokens/s。
+4. 为下一步 LLM 流式服务化做准备。
+
+### 当前目录状态
+
+当前仓库已有：
+
+```text
+hf-llm-benchmark/
+├── README.md
+├── LEARN.md
+├── requirements.txt
+└── venv/
+```
+
+当前终端位置应为：
+
+```bash
+pwd
+# /home/john/work/hf-llm-benchmark
+```
+
+### Step 0：Ownership Recovery（先做这个）
+
+目标：不要继续让 AI 生成一堆脚本，而是先确认「我自己能讲清楚什么」。
+
+#### 0.1 盘点当前仓库
+
+只读不改，先确认有哪些文件：
+
+```bash
+ls -la
+```
+
+需要回答：
+
+- `README.md` 是给谁看的？
+- `LEARN.md` 是给谁看的？
+- `requirements.txt` 里每个包大概做什么？
+- 当前有没有真实 Python 脚本？如果没有，说明前面主要是学习笔记，不是可运行项目。
+
+#### 0.2 建立 ownership 笔记
+
+后续建议新增：
+
+```text
+notes/ownership.md
+```
+
+里面固定回答 5 个问题：
+
+1. 当前这段代码/命令解决什么问题？
+2. 输入是什么，输出是什么？
+3. 核心 API 是什么？
+4. 最容易错在哪里？
+5. 如果删掉 AI 生成内容，我能否写出最小版本？
+
+#### 0.3 最小重写目标
+
+后续建议新增：
+
+```text
+scratch/minimal_infer.py
+```
+
+要求：
+
+- 30-50 行；
+- 只跑 Qwen3-0.6B；
+- 打印 prompt、chat_template、input_ids、output_ids、decoded text；
+- 不复制大段 AI 生成脚本；
+- 先跑通一次，不追求封装。
+
+### Step 1：HF Transformers 最小闭环
+
+#### 1.1 环境确认
+
+```bash
+source venv/bin/activate
+python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
+```
+
+通过标准：
+
+```text
+CPU only: True
+```
+
+#### 1.2 模型路径确认
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+ls -lh ~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/*/
+```
+
+如果目录不存在，再执行下载。
+
+#### 1.3 最小推理链路
+
+目标不是「写漂亮代码」，而是能解释这条链路：
+
+```text
+messages
+  → tokenizer.apply_chat_template()
+  → tokenizer(...)
+  → model.generate()
+  → tokenizer.decode()
+```
+
+每一步都要打印中间结果。
+
+#### 1.4 Tokenizer 显微镜
+
+用 3 条句子观察 token 数：
+
+```text
+你好，介绍一下你自己。
+Explain what a database foreign data wrapper is.
+请用三句话解释 PostgreSQL FDW 的作用。
+```
+
+输出到：
+
+```text
+results/tokenizer_notes.md
+```
+
+要回答：
+
+- 中文 token 数和英文 token 数差异是什么？
+- chat_template 加了哪些特殊 token？
+- input_ids 和 attention_mask 分别是什么？
+
+#### 1.5 最小 Benchmark
+
+先不要做完整压测，只做：
+
+```text
+3 条 prompt × 3 次运行
+```
+
+输出：
+
+- avg latency
+- P50
+- P99
+- tokens/s
+
+确认统计逻辑自己能讲清后，再扩展。
+
+### 当前停止条件
+
+如果下面 3 件事讲不清，不继续新增功能：
+
+1. `apply_chat_template()` 做了什么；
+2. `model.generate()` 的输入输出是什么；
+3. benchmark 的 P50/P99 是怎么算出来的。
+
+这不是拖慢进度，而是防止项目再次变成「AI 生成脚本，我只负责运行」。
 
 ---
 
