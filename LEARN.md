@@ -1,6 +1,6 @@
 # Step 1 学习笔记：HuggingFace Transformers LLM 推理基础
 
-> 学习日期：2026-06-22 | 最近更新：2026-06-28 | 模型：Qwen3-0.6B | 设备：CPU (WSL2, 13GB RAM)
+> 学习日期：2026-06-22 | 最近更新：2026-06-28（补全 1.3 最小推理脚本） | 模型：Qwen3-0.6B | 设备：CPU (WSL2, 13GB RAM)
 
 ---
 
@@ -73,18 +73,14 @@ notes/ownership.md
 
 #### 0.3 最小重写目标
 
-后续建议新增：
-
-```text
-scratch/minimal_infer.py
-```
+创建 `scratch/minimal_infer.py`，完整代码与运行步骤见下方 [1.3](#13-最小推理链路下载完模型后从这里开始)。
 
 要求：
 
 - 30-50 行；
 - 只跑 Qwen3-0.6B；
 - 打印 prompt、chat_template、input_ids、output_ids、decoded text；
-- 不复制大段 AI 生成脚本；
+- 建议自己手敲一遍；卡住时对照 1.3，但不要无脑复制大段封装代码；
 - 先跑通一次，不追求封装。
 
 ### Step 1：HF Transformers 最小闭环
@@ -111,19 +107,117 @@ ls -lh ~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/*/
 
 如果目录不存在，再执行下载。
 
-#### 1.3 最小推理链路
+#### 1.3 最小推理链路（下载完模型后从这里开始）
 
-目标不是「写漂亮代码」，而是能解释这条链路：
+**核心认知：** 不需要手动写 `~/.cache/huggingface/...` 路径。只要写模型 ID `"Qwen/Qwen3-0.6B"`，`transformers` 会自动在本地 cache 查找；找到就直接加载，找不到才联网下载。
+
+整条链路 6 步（加载 + 推理 4 步）：
 
 ```text
-messages
-  → tokenizer.apply_chat_template()
-  → tokenizer(...)
-  → model.generate()
-  → tokenizer.decode()
+① AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")   ← 加载分词器（小文件）
+② AutoModelForCausalLM.from_pretrained(...)           ← 加载权重到 PyTorch（~1.4GB）
+③ messages → apply_chat_template()                    ← 对话格式转换
+④ tokenizer(...) → input_ids                          ← 文字 → 数字
+⑤ model.generate(...)                                 ← 自回归生成（最慢）
+⑥ tokenizer.decode(...)                               ← 数字 → 文字
 ```
 
-每一步都要打印中间结果。
+| Python API | 系统类比 |
+|------------|----------|
+| `"Qwen/Qwen3-0.6B"` | 库名 + 版本号，不是文件路径 |
+| `from_pretrained()` | `dlopen()` + 读 config + 映射权重到内存 |
+| `~/.cache/huggingface/` | 包管理器的 global store，下载一次全局复用 |
+| `tokenizer(...)` | 字符串 → `std::vector<int>` |
+| `model.generate()` | 循环 forward，每次 append 一个 token |
+| `torch.no_grad()` | 推理模式，不算梯度，省内存 |
+
+**创建文件** `scratch/minimal_infer.py`（建议自己手敲一遍；卡住时可对照下方）：
+
+```python
+#!/usr/bin/env python3
+"""最小推理：验证 prompt → generate → decode 全链路。"""
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+MODEL_ID = "Qwen/Qwen3-0.6B"
+
+# --- 0. 加载（会自动读 ~/.cache/huggingface/）---
+print("加载 tokenizer 和 model...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    torch_dtype=torch.float32,   # CPU 用 FP32 最稳
+)
+model.eval()
+
+# --- 1. 构造对话 ---
+messages = [
+    {"role": "user", "content": "用一句话解释什么是 API"},
+]
+
+# --- 2. chat_template → 模型训练时看到的字符串 ---
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    add_generation_prompt=True,  # 末尾加 assistant 开头，告诉模型该生成了
+)
+print("\n=== chat_template 结果 ===")
+print(prompt)
+
+# --- 3. tokenize → PyTorch tensor ---
+inputs = tokenizer(prompt, return_tensors="pt")
+print("\n=== input_ids ===")
+print(inputs["input_ids"])
+print("input token 数:", inputs["input_ids"].shape[-1])
+
+# --- 4. generate（CPU 上可能要 10~20 秒）---
+print("\n生成中...")
+with torch.no_grad():
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=64,
+        do_sample=False,
+    )
+
+print("\n=== output_ids（含输入+新生成）===")
+print(output_ids)
+
+# --- 5. decode：只解码新生成的部分 ---
+new_ids = output_ids[0, inputs["input_ids"].shape[-1]:]
+text = tokenizer.decode(new_ids, skip_special_tokens=True)
+
+print("\n=== 模型回复 ===")
+print(text)
+```
+
+**运行：**
+
+```bash
+mkdir -p scratch
+# 把上面代码写入 scratch/minimal_infer.py 后：
+source venv/bin/activate
+export HF_ENDPOINT=https://hf-mirror.com
+python scratch/minimal_infer.py
+```
+
+**验收标准（跑通后指着终端输出能讲清楚）：**
+
+1. `chat_template` 加了哪些特殊 token（`<|im_start|>` 等）？
+2. `input_ids` 有多少个数字？
+3. `output_ids` 比输入长了多少（= 生成了几个 token）？
+4. decode 后为什么只有 assistant 回复，没有重复 prompt？
+
+**常见报错：**
+
+| 报错 | 原因 | 处理 |
+|------|------|------|
+| `OSError: ... does not appear to have a file named ...` | cache 不完整 | 重新执行 1.2 或 `snapshot_download` |
+| 进程被 killed | FP32 加载约需 2–3GB RAM | 关其他程序 |
+| 输出重复 prompt / 不像是回复 | 忘了 `add_generation_prompt=True` | 加上这行 |
+| 很慢但无报错 | CPU 正常 | 预期 ~10 tok/s，不是 bug |
+
+五个 API 的逐行说明见 [4.1.1 五个核心 API](#411-五个核心-api)。
 
 #### 1.4 Tokenizer 显微镜
 
@@ -501,6 +595,21 @@ messages = [
     │
     输出 "API（Application Programming Interface）是应用程序接口..."
 ```
+
+### 4.1.1 五个核心 API
+
+| # | API | 输入 | 输出 | 要点 |
+|---|-----|------|------|------|
+| 0 | `AutoTokenizer.from_pretrained(MODEL_ID)` | 模型 ID 字符串 | tokenizer 对象 | 只读 vocab/tokenizer 配置，不加载 1.4GB 权重 |
+| 0 | `AutoModelForCausalLM.from_pretrained(MODEL_ID)` | 模型 ID 字符串 | PyTorch 模型 | `CausalLM` = 因果语言模型，适合「给定前文预测下一个 token」 |
+| 1 | `apply_chat_template(messages, tokenize=False, add_generation_prompt=True)` | messages 数组 | 格式化字符串 | `add_generation_prompt=True` 必须在 generate 前加，否则模型不知道轮到自己说话 |
+| 2 | `tokenizer(prompt, return_tensors="pt")` | 字符串 | `input_ids` + `attention_mask` tensor | `return_tensors="pt"` 返回 PyTorch tensor，供 `model.generate(**inputs)` 使用 |
+| 3 | `model.generate(**inputs, max_new_tokens=64, do_sample=False)` | token tensor | 含输入+新生成的 ids | 内部循环 forward → 采样/argmax → append；第一次跑通建议 `max_new_tokens=64` |
+| 4 | `tokenizer.decode(new_ids, skip_special_tokens=True)` | token id 列表 | 人类可读文本 | 只 decode 新生成部分：`output_ids[0, input_len:]` |
+
+**PyTorch 在这里的角色：** `transformers` 把权重建成 `torch.nn.Module`，`generate()` 内部调 PyTorch 矩阵运算。推理时不需要手写 `model.forward()`，用 `torch.no_grad()` 包一层即可。
+
+完整可运行脚本见顶部 [1.3 最小推理链路](#13-最小推理链路下载完模型后从这里开始)。
 
 ### 4.2 为什么自回归生成慢？
 
