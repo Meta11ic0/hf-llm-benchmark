@@ -1,7 +1,7 @@
 # HF LLM Benchmark — LLM 服务化前置学习项目
 
 > 用最小成本（纯 CPU、单机）获得 LLM 推理工程的底层手感，为后续 LLM 流式服务化做准备。
-> 详细学习计划与进度见 [LEARN.md](LEARN.md)。
+> Step 1 计划驱动执行手册（任务 1.1–1.9，含环境、逐行代码说明、踩坑）见 [LEARN.md](LEARN.md)。
 
 ---
 
@@ -22,7 +22,7 @@ python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"  # 
 
 ## 技术选型
 
-Qwen3-0.6B + HuggingFace Transformers + FP32/INT8 对比 + 纯 CPU（WSL2）+ HF Mirror 镜像。选型理由见 [LEARN.md §1–2](LEARN.md)。
+Qwen3-0.6B + HuggingFace Transformers + FP32/INT8 对比 + 纯 CPU（WSL2）+ HF Mirror 镜像。选型理由见 [LEARN.md](LEARN.md) 前置环境准备与 §1.2 模型结构。
 
 ---
 
@@ -31,7 +31,8 @@ Qwen3-0.6B + HuggingFace Transformers + FP32/INT8 对比 + 纯 CPU（WSL2）+ HF
 ```
 hf-llm-benchmark/
 ├── README.md / LEARN.md / CLAUDE.md / requirements.txt
-└── (后续) benchmark.py   # 任务 1.6
+├── minimal_infer.py      # 任务 1.1
+└── benchmark.py            # 任务 1.6
 ```
 
 验收标准、CPU 速度预期与量化注意见 [LEARN.md](LEARN.md)。

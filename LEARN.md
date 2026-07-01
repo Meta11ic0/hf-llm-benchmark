@@ -1,744 +1,513 @@
-# Step 1 学习笔记：HuggingFace Transformers LLM 推理基础
+# Step 1 执行手册
 
-> 学习日期：2026-06-22 | 最近更新：2026-06-28（补全 1.3 最小推理脚本） | 模型：Qwen3-0.6B | 设备：CPU (WSL2, 13GB RAM)
+>  设备：CPU (WSL2) | 模型：Qwen3-0.6B
+>
+> **本文档定位**：以计划任务 1.1–1.9 为主干，每节含「要做什么 → 步骤 → 踩坑 → 验收」。环境细节与实验结论穿插在对应任务中，不再单独堆在文末。
 
 ---
 
-## 当前操作指引（v9）
+## 任务总览
 
-> **任务编号冲突时，以本表为准。** 1.6 = Benchmark，1.7 = 量化。
-
-### 任务进度（权威）
-
-| # | 任务 | 状态 |
+| # | 任务（对齐计划 4.6） | 状态 |
 |---|------|------|
-| 0 | Ownership Recovery | ⬜ |
-| 1.1 | 环境准备 | ✅ |
-| 1.2 | 模型下载与文件结构 | ✅ |
-| 1.3 | 分词器入门 | ✅ |
+| **1.1** | **最小推理链路复现（`minimal_infer.py`）** | **⬜ ← 当前** |
+| 1.2 | 模型文件结构 | ✅ |
+| 1.3 | 分词器显微镜 | ✅ |
 | 1.4 | 单次推理跑通 | ✅ |
 | 1.5 | 生成参数实验 | ✅ |
-| 1.6 | 最小 Benchmark (3×3) | ⬜ |
-| 1.7 | 量化实验/理论推算 | ⬜ |
-| 1.8 | 结果整理 | ⬜ |
+| 1.6 | Benchmark 最小版（3 prompt × 3 次） | ⬜ |
+| 1.7 | 双模型对比（Qwen vs Llama） | ⬜ |
+| 1.8 | 量化实验 / 理论推算 | ⬜ |
+| 1.9 | 结果整理 + README | ⬜ |
 
-**1.6 = Benchmark BEFORE 1.7 = 量化** — 先确认统计逻辑，再谈 FP32 vs INT8。
-
-### 为什么要重排？
-
-这个仓库原本是 `ai-infra-project-plan.md` 的 Step 1：HF Transformers LLM 推理基础。
-
-但最新计划已经修正为「AI 工程落地 / LLM 服务化」路线，所以本仓库现在的定位不是「把脚本跑完」，而是：
-
-1. 夺回 ownership：确认哪些代码和流程是我能解释、能重写的。
-2. 建立最小推理链路：prompt → chat_template → input_ids → generate → decode。
-3. 得到可讲的 benchmark 结果：avg / P50 / P99 / tokens/s。
-4. 为下一步 LLM 流式服务化做准备。
-
-### 当前目录状态
-
-当前仓库已有：
-
-```text
-hf-llm-benchmark/
-├── README.md
-├── LEARN.md
-├── CLAUDE.md
-├── requirements.txt
-└── venv/
-```
-
-当前终端位置应为项目根目录：
-
-```bash
-pwd
-# 示例：~/personal/hf-llm-benchmark（你的路径可能不同）
-```
-
-### Step 0：Ownership Recovery（先做这个）
-
-目标：不要继续让 AI 生成一堆脚本，而是先确认「我自己能讲清楚什么」。
-
-#### 0.1 盘点当前仓库
-
-只读不改，先确认有哪些文件：
-
-```bash
-ls -la
-```
-
-需要回答：
-
-- `README.md` 是给谁看的？
-- `LEARN.md` 是给谁看的？
-- `requirements.txt` 里每个包大概做什么？
-- 当前有没有真实 Python 脚本？如果没有，说明前面主要是学习笔记，不是可运行项目。
-
-#### 0.2 建立 ownership 笔记
-
-后续建议新增：
-
-```text
-notes/ownership.md
-```
-
-里面固定回答 5 个问题：
-
-1. 当前这段代码/命令解决什么问题？
-2. 输入是什么，输出是什么？
-3. 核心 API 是什么？
-4. 最容易错在哪里？
-5. 如果删掉 AI 生成内容，我能否写出最小版本？
-
-#### 0.3 最小重写目标
-
-创建 `scratch/minimal_infer.py`，完整代码与运行步骤见下方 [§4 单次推理跑通](#4-单次推理跑通)。
-
-要求：
-
-- 30-50 行；
-- 只跑 Qwen3-0.6B；
-- 打印 prompt、chat_template、input_ids、output_ids、decoded text；
-- 建议自己手敲一遍；卡住时对照 §4，但不要无脑复制大段封装代码；
-- 先跑通一次，不追求封装。
-
-### Step 1 已完成（1.1–1.5）
-
-| # | 任务 | 状态 | 详见 |
-|---|------|------|------|
-| 1.1 | 环境准备 | ✅ | [§1 环境准备](#1-环境准备) |
-| 1.2 | 模型下载与文件结构 | ✅ | [§2 模型下载与文件结构](#2-模型下载与文件结构) |
-| 1.3 | 分词器入门 | ✅ | [§3 分词器（Tokenizer）](#3-分词器tokenizer) |
-| 1.4 | 单次推理跑通 | ✅ | [§4 单次推理跑通](#4-单次推理跑通) |
-| 1.5 | 生成参数实验 | ✅ | [§5 生成参数实验](#5-生成参数实验) |
-
-实验数据、API 说明和面试要点均保留在下方 §1–5，不在此重复。
-
-### Step 1 当前任务：1.6 最小 Benchmark (3×3)
-
-先不要做完整压测，只做：
-
-```text
-3 条 prompt × 3 次运行
-```
-
-输出：
-
-- avg latency
-- P50
-- P99
-- tokens/s
-
-确认统计逻辑自己能讲清后，再扩展。建议自写 `benchmark.py`（详见 [§7 后续学习路线](#7-后续学习路线)）。
-
-### 下一站预览：1.7 量化实验 / 理论推算
-
-FP32 vs INT8 内存差异与 trade-off，CPU 环境不硬卡 `bitsandbytes`。详细目标见 [§7](#7-后续学习路线)。
-
-### 当前停止条件
-
-如果下面 3 件事讲不清，不继续新增功能：
+**停止条件**（下面 3 件事讲不清，不继续新增功能）：
 
 1. `apply_chat_template()` 做了什么；
 2. `model.generate()` 的输入输出是什么；
 3. benchmark 的 P50/P99 是怎么算出来的。
 
-这不是拖慢进度，而是防止项目再次变成「AI 生成脚本，我只负责运行」。
+**当前目录**（脚本在项目根目录，直接 `python minimal_infer.py`）：
 
----
-
-## 已完成实验归档（§1–5）
-
-以下为历史实验笔记，保留全部数据与面试要点。
-
----
-
-## 目录
-
-1. [环境准备](#1-环境准备)
-2. [模型下载与文件结构](#2-模型下载与文件结构)
-3. [分词器（Tokenizer）](#3-分词器tokenizer)
-4. [单次推理跑通](#4-单次推理跑通)
-5. [生成参数实验](#5-生成参数实验)
-6. [学习进度](#6-学习进度)
-7. [后续学习路线](#7-后续学习路线)
-8. [附注：关于 Llama 和 Instruct](#附注关于-llama-和-instruct)
-9. [附录：历史预生成脚本（已归档）](#附录历史预生成脚本已归档)
-
----
-
-## 1. 环境准备
-
-### 1.1 在做什么？
-
-让一台只有 CPU 的 Linux 机器具备加载和运行开源大模型的能力。
-
-### 1.2 为什么是第一步？
-
-HuggingFace Transformers 是所有开源 LLM 工程的入口。不做这步，后面什么都没法做。类比 C++ 开发者必须先装 gcc/cmake。
-
-### 1.3 每一步做了什么、为什么
-
-#### 安装 pip（Python 的包管理器）
-
-```bash
-sudo apt install -y python3-pip
+```text
+hf-llm-benchmark/
+├── README.md
+├── LEARN.md              ← 本文件
+├── requirements.txt
+├── minimal_infer.py      ← 任务 1.1
+├── benchmark.py          ← 任务 1.6（后续）
+└── venv/
 ```
 
-Python 装包和 C++ 装库的区别：
-- C++: 下载源码 → cmake → make install → 头文件放 `/usr/include/`，库放 `/usr/lib/`
-- Python: `pip install <包名>` 一条命令，自动下载+安装到 `site-packages/`
+---
 
-`pip` 就是这个包管理器。系统 Python 3.10.12 默认没带，所以需要 apt 单独装。
+## 前置：环境准备
 
-#### 安装 venv（虚拟环境）
+### 要做什么
+
+让一台只有 CPU 的 Linux 机器具备加载和运行开源大模型的能力——装 venv、CPU 版 PyTorch、HF 镜像、核心依赖包。
+
+### 详细步骤
+
+**① 进入项目并创建虚拟环境**
 
 ```bash
-sudo apt install -y python3-venv
+cd ~/work/hf-llm-benchmark
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-**为什么需要虚拟环境？** Python 全局安装包会导致版本冲突。项目 A 需要 `torch==2.0`，项目 B 需要 `torch==2.12`——两者装到全局就会打架。
+`venv` 按项目隔离 Python 包，类比 C++ 里 `export LD_LIBRARY_PATH=./build/lib`——不同项目的 `torch` 版本互不打架。
 
-`venv` 创建一个独立的 Python 环境目录 `venv/`。激活后 `pip install` 的所有包都装在这个目录里，互不干扰。
-
-**C++ 类比：**
-```bash
-# Python venv ≈ C++ 项目隔离
-source venv/bin/activate     # ≈ export LD_LIBRARY_PATH=./build/lib
-pip install torch            # ≈ cmake --build . --target install (到 ./build/lib)
-```
-
-#### 配置国内镜像
+**② 配置国内镜像（必做）**
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
+# 建议写入 ~/.bashrc，每次开终端自动生效
 ```
 
-HuggingFace 官方服务器在国内直连极慢（几十 KB/s，经常超时）。`hf-mirror.com` 是国内社区维护的完整镜像。设置后所有模型下载自动走镜像，代码不用改。
+HuggingFace 官方服务器在国内直连极慢或超时；设置后 `huggingface_hub` 所有下载自动走镜像，代码不用改。
 
-#### 安装 PyTorch（CPU 版）
+**③ 安装 CPU 版 PyTorch（最容易出错的一步）**
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-**这是整个环境准备里最容易出错的一步。** 不加 `--index-url` 时 pip 默认下载 CUDA 版 PyTorch（~800MB），在 CPU 机器上可能报错或静默异常。
+不加 `--index-url` 时 pip 默认下载 CUDA 版（~800MB），在 CPU 机器上可能报错或行为异常。CPU 版约 200MB，不依赖任何 CUDA 组件。
 
-`--index-url https://download.pytorch.org/whl/cpu` 强制从 PyTorch 官方的 CPU-only 仓库下载，包体积约 200MB，不依赖任何 CUDA 组件。
+**④ 验证 PyTorch 版本**
 
-装完后在终端验证（一行命令，不需要写文件）：
 ```bash
 python3 -c "import torch; print('CPU only:', not torch.cuda.is_available())"
-# 输出 CPU only: True 表示装的是 CPU 版 PyTorch，正确 ✅
-# 输出 CPU only: False 表示装成了 CUDA 版，需要卸载重装 CPU 版
+# 期望输出：CPU only: True
 ```
 
-#### 安装 HuggingFace 核心包
+**⑤ 安装 HuggingFace 核心包**
 
 ```bash
-pip install transformers accelerate bitsandbytes huggingface_hub sentencepiece tiktoken
+pip install -r requirements.txt
+# 或手动：transformers accelerate bitsandbytes huggingface_hub sentencepiece tiktoken
 ```
 
 | 包 | 作用 |
 |----|------|
-| `transformers` | 核心库：`AutoModel`, `AutoTokenizer`, `model.generate()` |
-| `accelerate` | 模型加载加速：管理权重放哪个设备（CPU/GPU）、内存优化 |
-| `bitsandbytes` | 量化库：FP32 → INT8 权重压缩 |
-| `huggingface_hub` | HF Hub 客户端：下载模型、管理缓存 |
-| `sentencepiece` | BPE 分词算法（Llama tokenizer 依赖） |
-| `tiktoken` | OpenAI 的 tokenizer 库 |
+| `transformers` | `AutoModel`、`AutoTokenizer`、`model.generate()` |
+| `accelerate` | 权重加载到 CPU/GPU 的设备管理 |
+| `bitsandbytes` | FP32 → INT8 量化（Step 1.8） |
+| `huggingface_hub` | 模型下载与缓存管理 |
+| `sentencepiece` / `tiktoken` | 分词算法依赖 |
+
+### 可能遇到的问题
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| `CPU only: False` | 装成了 CUDA 版 PyTorch | `pip uninstall torch` 后重装 CPU 版 |
+| 模型下载极慢 / 超时 | 未设 HF 镜像 | `export HF_ENDPOINT=https://hf-mirror.com` |
+| `python3-venv` 不存在 | 系统未装 venv 模块 | `sudo apt install -y python3-venv python3-pip` |
+| `pip install torch` 体积 ~800MB | 下了 CUDA 版 | 加 `--index-url https://download.pytorch.org/whl/cpu` |
+
+### 验收标准
+
+- [ ] `source venv/bin/activate` 后终端提示符有 `(venv)`
+- [ ] `python3 -c "import torch; print(not torch.cuda.is_available())"` 输出 `True`
+- [ ] `import transformers` 无报错
 
 ---
 
-## 2. 模型下载与文件结构
+## 1.1 最小推理（minimal_infer.py）← 当前
 
-### 2.0 下载命令与两种方式对比
+### 要做什么
 
-**两种下载方式及其区别：**
+从空文件手写 `minimal_infer.py`（约 30–40 行），跑一条 prompt，打印 chat_template / input_ids / 模型回复。这是 Step 1 所有后续任务的代码地基。
 
-| | 方式一：`snapshot_download()` | 方式二：`AutoModel.from_pretrained()` |
-|---|---|---|
-| 触发方式 | 主动调用 huggingface_hub API | transformers 加载模型时自动触发 |
-| 下载了什么 | 只下载文件，不加载到内存 | 下载 + 解析 config + 创建模型对象 |
-| 适合场景 | 先下载后研究，分步理解 | 一步到位跑推理 |
-| 类比 C++ | `wget` 下载源码包 | `cmake --build . && make install` 一条龙 |
-
-**推荐学习顺序：先用方式一下载，确认文件结构后再用方式二加载推理。** 这在面试时也更好讲——你能说清楚"下载"和"加载"是两步。
-
-> **关于模型命名：** `Qwen/Qwen3-0.6B` 本身就是 Instruct 模型——Qwen3 系列在 HuggingFace 上不区分 base 和 Instruct 仓库，chat_template 已内置在 `tokenizer_config.json` 中。最初计划使用的 `Qwen/Qwen3-0.6B-Instruct` 在 hf-mirror 镜像上返回 401（该仓库名不存在），改为 `Qwen/Qwen3-0.6B` 即可，不影响所有实验。
+### 最快跑通（4 条命令）
 
 ```bash
-# 确保镜像已设置
+cd ~/work/hf-llm-benchmark
+source venv/bin/activate
 export HF_ENDPOINT=https://hf-mirror.com
-
-# 方式一：只下载，不加载（推荐先用这个）
-python3 -c "
-from huggingface_hub import snapshot_download
-path = snapshot_download('Qwen/Qwen3-0.6B')
-print(f'下载完成，路径: {path}')
-"
-
-# 方式二：下载+加载一条龙（后续推理时实际用的）
-# from transformers import AutoModelForCausalLM
-# model = AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-0.6B')
+python minimal_infer.py
 ```
 
-下载后检查缓存目录：
+首次运行会自动下载 Qwen3-0.6B（~1.4GB）到 `~/.cache/huggingface/`。模型已在 cache 里则直接加载。
+
+### 完整代码（含逐行注释）
+
+```python
+#!/usr/bin/env python3
+# Shebang：声明用 Python 3 解释器；`python minimal_infer.py` 时系统自动选用
+"""最小推理：验证 prompt → generate → decode 全链路。"""  # 模块 docstring，说明脚本目的
+
+import torch  # PyTorch 是 transformers 的底层计算引擎；tensor 操作和 no_grad 都依赖它
+from transformers import AutoModelForCausalLM, AutoTokenizer
+# AutoModelForCausalLM — 因果语言模型自动加载器（Causal = 自回归，只看当前 token 之前的上下文）
+# AutoTokenizer — 根据 MODEL_ID 自动找到对应词表和分词规则，无需手动指定 tokenizer 类
+
+MODEL_ID = "Qwen/Qwen3-0.6B"
+# HuggingFace Hub 仓库名；from_pretrained 先查 ~/.cache/huggingface/，有则加载，无则下载
+# Qwen3 系列不区分 base/Instruct 仓库名；0.6B 已内置 chat_template
+
+print("加载 tokenizer 和 model...")  # UX 提示：模型加载约 10–30 秒，避免用户以为卡死
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+# 只下载/读取 tokenizer 文件（~11MB）；此时不加载 1.4GB 模型权重
+# 提供 encode / decode / apply_chat_template 方法
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    torch_dtype=torch.float32,   # CPU 推理用 FP32 最稳；float16 在部分 CPU 上支持不完整
+)
+# 下载/读取 model.safetensors（~1.4GB），构建 PyTorch 计算图；FP32 内存约 2–3GB
+
+model.eval()  # 切换推理模式：关闭 Dropout 等训练层；同样输入行为确定（类比 release 构建）
+
+messages = [{"role": "user", "content": "用一句话解释什么是 API"}]
+# OpenAI 风格对话格式；模型训练时看到的是 chat_template 转换后的原始字符串
+
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,              # 只返回字符串，不转 token id（便于下一步单独 tokenize 并打印）
+    add_generation_prompt=True,  # 关键：末尾追加 <|im_start|>assistant\n，告诉模型轮到你生成了
+)
+# 漏掉 add_generation_prompt 会重复 prompt 或输出为空
+# Qwen3 输出示例：
+#   <|im_start|>user\n用一句话解释什么是 API\n<|im_start|>assistant\n
+
+print("\n=== chat_template 结果 ===")
+print(prompt)  # 调试：确认 messages → 带特殊标记的字符串 转换正确
+
+inputs = tokenizer(prompt, return_tensors="pt")
+# 编码 prompt 为 token id；return_tensors="pt" 返回 PyTorch tensor 供 generate 使用
+# 返回值含 input_ids [1, seq_len] 和 attention_mask（无 padding 时全 1）
+
+print("\n=== input_ids ===")
+print(inputs["input_ids"])  # 典型约 14 个 token，展示「人类语言 → 数字序列」
+
+print("\n生成中...")  # generate 在 CPU 上约 10 tok/s，64 token 需 ~6 秒，属正常
+
+with torch.no_grad():  # 推理时不建计算图、不算梯度，省内存（只读调用）
+    output_ids = model.generate(**inputs, max_new_tokens=64, do_sample=False)
+    # **inputs 解包 input_ids 和 attention_mask
+    # max_new_tokens=64 — 最多新生成 64 个 token（不含输入长度）
+    # do_sample=False — greedy decoding，每步选最高概率 token，输出确定可复现
+    # output_ids shape [1, input_len + new_len]，包含输入 + 生成的全部 token
+
+new_ids = output_ids[0, inputs["input_ids"].shape[-1]:]
+# output_ids[0] 取 batch 第一条；[input_len:] 切片只保留新生成的 token，去掉 prompt 部分
+
+text = tokenizer.decode(new_ids, skip_special_tokens=True)
+# token id → 人类可读文本；skip_special_tokens=True 去掉 <|im_start|> 等控制符
+
+print("\n=== 模型回复 ===")
+print(text)  # 验收：应看到关于 API 的中文解释，而非重复 prompt 或乱码
+```
+
+### 可能遇到的问题
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| `OSError: ... does not appear to have a file named ...` | cache 不完整 | 重跑并确保 `HF_ENDPOINT` 已设；或 `snapshot_download('Qwen/Qwen3-0.6B')` |
+| 进程被 killed | FP32 加载需 ~2–3GB RAM | 关闭其他占内存程序 |
+| 输出重复 prompt、无回复 | 忘了 `add_generation_prompt=True` | 加上这行 |
+| 很慢但无报错 | CPU 正常 | ~10 tok/s，64 token ≈ 6s，不是 bug |
+| `401 Unauthorized` 用 `Qwen3-0.6B-Instruct` | 该仓库名在镜像上不存在 | 改用 `Qwen/Qwen3-0.6B` |
+
+### 验收标准
+
+- [ ] `python minimal_infer.py` 输出含 chat_template、input_ids、模型中文回复
+- [ ] 能不看文档解释五步：load → chat_template → tokenize → generate → decode
+- [ ] 能说出 `add_generation_prompt=True` 为什么必须加
+- [ ] 能说出 `output_ids` 为什么需要切片才能 decode 回复
+
+---
+
+## 1.2 模型文件结构
+
+### 要做什么
+
+解读 Qwen3 缓存目录里每个文件的角色，能从 `config.json` 估算参数量级。
+
+### 详细步骤
+
+**① 确认模型已下载**
+
 ```bash
+export HF_ENDPOINT=https://hf-mirror.com
 ls -lh ~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/*/
 ```
 
-> **CPU 指令集问题：** PyTorch CPU 版不要求特殊指令集（AVX/AVX-512 等），任何 x86-64 CPU 都能跑。PyTorch 启动时自动检测并启用可用指令集，无需配置。唯一注意：`bitsandbytes` 8-bit 量化在纯 CPU 环境可能受限（Step 1.7 详述）。
-
-### 2.1 下载了什么
-
-从 HuggingFace Hub 下载了 **Qwen3-0.6B** 模型，约 1.4GB，存放在：
-
-```
-~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B/snapshots/<hash>/
-```
-
-### 2.2 模型目录里的每个文件
+**② 只看三个核心文件**
 
 | 文件 | 大小 | 是什么 | C++ 类比 |
 |------|------|--------|----------|
-| `model.safetensors` | 1433.7 MB | 模型所有权重（6亿个浮点数） | 编译好的 `libmodel.so` |
-| `tokenizer.json` | 10.9 MB | 词表——151936 个 token 的映射 | 字符编码表 |
-| `config.json` | 1.5 KB | 模型架构参数 | 头文件配置 `#define HIDDEN_SIZE 1024` |
-| `tokenizer_config.json` | ~5 KB | tokenizer 配置 + chat_template | API 配置文件 |
-| `generation_config.json` | ~0.7 KB | 默认生成参数 | 默认编译选项 |
+| `model.safetensors` | ~1.4 GB | 全部权重（~6 亿浮点数） | 编译好的 `libmodel.so` |
+| `tokenizer.json` | ~11 MB | 151936 个 token 的映射表 | 字符编码表 |
+| `config.json` | ~1.5 KB | 架构参数（层数、维度、词表大小） | 头文件 `#define HIDDEN_SIZE 1024` |
 
-### 2.3 config.json 关键参数解读
+**③ 读 config.json 关键字段**
 
 ```json
 {
-  "hidden_size": 1024,              // 每个 token 用 1024 维向量表示
-  "num_hidden_layers": 28,           // Transformer 层的数量
-  "intermediate_size": 3072,         // FFN 中间维度（3× hidden_size）
-  "vocab_size": 151936,              // 词表大小——模型"认识"多少个 token
-  "num_attention_heads": 16,         // 注意力头数
-  "num_key_value_heads": 8,          // KV 头数（GQA）
-  "max_position_embeddings": 40960,  // 最大上下文长度 = 32K tokens
-  "rope_theta": 1000000,             // 长文本位置编码能力
-  "tie_word_embeddings": true        // 输入输出共享权重（省参数）
+  "hidden_size": 1024,
+  "num_hidden_layers": 28,
+  "intermediate_size": 3072,
+  "vocab_size": 151936,
+  "num_attention_heads": 16,
+  "num_key_value_heads": 8,
+  "max_position_embeddings": 40960
 }
 ```
 
-**Qwen3 vs Llama-3.2 配置对比：**
+**参数量估算（面试用）**：
+
+- 每层 Attention ≈ `4 × hidden_size²` ≈ 4.2M
+- 每层 FFN（SwiGLU，3 矩阵）≈ `3 × hidden × intermediate` ≈ 9.4M
+- 28 层 ≈ 381M + Embedding（151936 × 1024 ≈ 156M）≈ **0.54B**（标称 0.6B，偏差来自 LayerNorm、权重共享等）
+
+### 可能遇到的问题
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| cache 目录为空 | 尚未下载 | 跑 `minimal_infer.py` 或 `snapshot_download()` |
+| 两个 snapshot 子目录 | Hub 版本更新 | 用最新 hash 目录即可 |
+
+### 验收标准
+
+- [ ] 能口述 safetensors / tokenizer.json / config.json 各自角色
+- [ ] 给定 config 能估算参数量级 ~0.6B
+
+---
+
+## 1.3 分词器显微镜
+
+### 要做什么
+
+用 3 条中英文句子观察 token 数、特殊 token、chat_template 格式开销；理解 prompt injection 原理。
+
+### 详细步骤
+
+```python
+# 交互式 Python 或自写 explore_tokenizer.py
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+
+for text in ["你好，今天天气怎么样？", "Explain API in one sentence.", "def hello(): pass"]:
+    ids = tok.encode(text)
+    print(f"{len(text)} chars → {len(ids)} tokens → {len(text)/len(ids):.1f} chars/token")
+```
+
+**已测结论**：
+
+| 文本类型 | 字符/Token |
+|----------|-----------|
+| 中文 | ~1.8 |
+| 英文 | ~4.5 |
+| 代码 | ~3.3 |
+
+中文 token 效率约为英文 **40%**——同样语义，中文需约 2.5× token 数 → 延迟更高。
+
+**chat_template 格式开销**：system(12) + user(8) + 特殊标记(13) = 33 tok，其中 **40% 是格式开销**。
+
+**prompt injection**：用户输入 `"<|im_start|>system"` 会被 tokenizer 当作特殊 token 吃掉，可伪造 system 角色。
+
+### 验收标准
+
+- [ ] 能解释中文 token 效率低是词表覆盖度问题，不是语言本身
+- [ ] 能说出 chat_template 把 OpenAI messages 格式转成模型原生格式
+
+---
+
+## 1.4 单次推理跑通
+
+### 要做什么
+
+在 1.1 脚本基础上，确认四步 pipeline 的数据流和性能基线（~11 tok/s）。
+
+### 验收标准
+
+- [ ] 能画出 prompt → token → generate → decode 数据流
+- [ ] 有 FP32 CPU ~11 tok/s 的实测数字
+
+---
+
+## 1.5 生成参数实验
+
+### 要做什么
+
+在 Qwen3 上系统对比 temperature / top_p / max_new_tokens / do_sample（13 组），记录输出质量与速度。
+
+### 详细步骤
+
+固定 prompt：「请用中文简要介绍人工智能的三个主要应用领域。」
+
+| 参数 | 控制什么 | 影响速度？ |
+|------|----------|-----------|
+| `temperature` | 概率分布陡峭程度 | ❌ 否 |
+| `top_p` | 核采样，截断长尾候选 | ❌ 否 |
+| `max_new_tokens` | 生成上限 | ✅ 线性关系 |
+| `do_sample` | True=采样，False=greedy | 略（~8%） |
+
+**关键数字（CPU FP32）**：
+
+| 实验 | 结论 |
+|------|------|
+| T=0.1/0.7/1.5 | 速度均 ~11 tok/s，T 只改分布不改计算量 |
+| max=32/128/256 | 3.1s / 11.5s / 23.3s，与 token 数近似线性 |
+| greedy vs sampling | 10.7s vs 11.6s，greedy 略快 |
+
+**线上排障映射**：回复太死板 → 提高 T；太随机 → 降低 T 或 greedy；要控延迟 → 减小 max_new_tokens。
+
+### 验收标准
+
+- [ ] 能解释「调参调质量不调速度」
+- [ ] 能说出 max_new_tokens 与延迟的线性关系及原因（每 token 一次前向传播）
+
+---
+
+## 1.6 Benchmark 最小版
+
+### 要做什么
+
+自写 `benchmark.py`：3 prompt × 3 次，输出 avg / P50 / P99 / tokens/s；含预热（丢弃首次）。
+
+### 详细步骤
+
+```bash
+python benchmark.py --model qwen
+# 产出：results/benchmark_3x3.json
+```
+
+**设计要点**：
+
+1. 预热 1 次，丢弃（首次加载 cache 慢，不代表稳态）
+2. 记录每次 wall time 和生成 token 数
+3. P50 = 中位数，P99 = 第 99 百分位
+4. tokens/s = 生成 token 总数 / 总耗时
+
+**CPU 预期**：Qwen3-0.6B FP32 约 **10–11 tok/s**；生成 512 token 约 50s。
+
+### 可能遇到的问题
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| 首次极慢 | 冷启动 + cache | 预热后丢弃 |
+| 150 次跑 5h+ | prompt 数 × 次数太多 | 先 3×3 出数据，再扩展 |
+
+### 验收标准
+
+- [ ] 能口述 P50/P99 计算方式
+- [ ] 输出含 avg / P50 / P99 / tokens/s
+
+---
+
+## 1.7 双模型对比
+
+### 要做什么
+
+加入 Llama-3.2-1B，同一句中文对比 token 数和推理速度，写明确结论。
+
+### 详细步骤
+
+```bash
+python benchmark.py --model llama   # 需 HF 账号授权
+```
+
+**预期结论**：Llama BPE 词表以英文为主，同一句中文 token 数约为 Qwen 的 **1.5–2×**。
+
+**Qwen vs Llama 配置对比**：
 
 | 维度 | Qwen3-0.6B | Llama-3.2-1B |
 |------|-----------|-------------|
 | hidden_size | 1024 | 2048 |
-| num_hidden_layers | 28 | 16 |
+| layers | 28 | 16 |
 | vocab_size | 151,936 | 128,256 |
-| max_position_embeddings | 40,960 (32K) | 131,072 (128K) |
-| 注意力 | GQA (Q:16, KV:8) | GQA (Q:12, KV:4) |
+| max context | 32K | 128K |
 
-**关键差异：** Qwen3 更深但更窄（28层 vs 16层），词表更大（中文 token 效率更好）；Llama 上下文更长（128K vs 32K）。
+### 可能遇到的问题
 
-### 2.4 参数量估算：为什么叫 0.6B？
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| Llama 401 | 需 Meta 授权 | 记录 blocker，用 config 对比代替 |
 
-从 config.json 的几个数字可以手动推算模型总参数量。
+### 验收标准
 
-每层 Transformer 包含两个模块：
-
-**Attention 模块（QKV + 输出投影）：**
-```
-W_Q: 1024 × 1024 = 1,048,576
-W_K: 1024 × 1024 = 1,048,576
-W_V: 1024 × 1024 = 1,048,576
-W_O: 1024 × 1024 = 1,048,576
-────────────────────────────
-合计: 4 × 1024² = 4,194,304 ≈ 4.2M
-```
-
-**FFN 模块（扩张 → 收缩，SwiGLU 变体多一个 gate 矩阵）：**
-```
-W_up:   1024 × 3072 = 3,145,728   ← 扩张到 3× hidden_size
-W_gate: 1024 × 3072 = 3,145,728   ← SwiGLU 门控
-W_down: 3072 × 1024 = 3,145,728   ← 缩回 hidden_size
-────────────────────────────
-合计: 3 × 1024 × 3072 = 9,437,184 ≈ 9.4M
-```
-
-**每层总计 ≈ 4.2M + 9.4M ≈ 13.6M**
-
-> 注：旧公式用 `2 × hidden × intermediate`（~6.3M），那是标准 FFN（无 gate）。Qwen3 用 SwiGLU，多了 gate 矩阵，所以是 3 个矩阵而非 2 个。
-
-**28 层 ≈ 13.6M × 28 ≈ 381M**
-
-**Embedding 层：** `vocab_size × hidden_size = 151936 × 1024 ≈ 156M`
-
-**总计 ≈ 381M + 156M ≈ 537M ≈ 0.54B**
-
-Qwen3 标称 0.6B（6 亿）。偏差来自：LayerNorm 参数、`tie_word_embeddings=true` 下 lm_head 和 embedding 共享权重（省了 ~156M），以及偏差项的累积。
-
-**面试可以这样说**：「给定 config.json，我能估算模型参数量级。核心公式是 Attention 块 4×hidden_size² + FFN 块 3×hidden_size×intermediate_size（SwiGLU 多一个 gate），乘以层数再加 embedding。算出来约 0.54B，与标称 0.6B 在合理范围内。」
-
-**C++ 类比**：相当于看 `struct` 定义推算 `sizeof()`——知道每个字段类型就能心算出总字节数，不需要真的跑编译器。
+- [ ] 能说出 tokenizer 词表覆盖度对推理成本的影响
 
 ---
 
-## 3. 分词器（Tokenizer）
+## 1.8 量化实验 / 理论推算
 
-### 3.1 Tokenizer 在做什么
+### 要做什么
 
-**把人类文字翻译成模型认识的数字序列，以及反过来。**
+对比 FP32 vs INT8 内存占用；CPU 上 bitsandbytes 不可用则做理论推算。
 
-```
-人类文字 "你好，今天天气怎么样？"
-     │  tokenizer.encode()
-     ▼
-Token IDs [108386, 100850, 104056, 104191, 106797, 102130]
-     │  model.generate()  ← 模型只认数字
-     ▼
-Token IDs [..., 新 token]
-     │  tokenizer.decode()
-     ▼
-人类文字 "今天天气不错！"
-```
+### 详细步骤
 
-**C++ 类比：** 类似 Unicode 编解码（字符 ↔ code point），但粒度不同——tokenizer 是「子词级别」映射：
-- 高频词（如 "今天"）→ 1 个完整 token
-- 低频词（如 "Qwen3"）→ 拆成多个字节 token
+**理论值**（0.6B 参数）：
 
-### 3.2 实测：中文 vs 英文 Token 效率
-
-| 文本类型 | 字符数 | Token 数 | 字符/Token |
-|----------|--------|----------|------------|
-| 中文短句 | 11 | 6 | 1.8 |
-| 中文长句 | 63 | 35 | 1.8 |
-| 英文短句 | 25 | 7 | 3.6 |
-| 英文长句 | 254 | 38 | 6.7 |
-| 代码片段 | 92 | 28 | 3.3 |
-
-**结论：** 中文 token 效率约是英文的 **40%**（1.8 vs 4.5 字符/token）。同样的语义内容，中文需要约 2.5 倍的 token 数 → 推理延迟更高 → API 费用更贵。
-
-**面试可以这样说：** 「中文 token 效率低不是因为语言本身，而是词表覆盖度问题。Qwen3 的 151K 词表为中文做了优化，如果换成 Llama 的 128K 英文主导词表，中文 token 数会更差。」
-
-### 3.3 chat_template：对话格式的自动转换
+- FP32：0.6B × 4 字节 ≈ **2.4 GB**（实际文件 ~1.4GB 因压缩/共享）
+- INT8：0.6B × 1 字节 ≈ **600 MB**（理论 ~4× 压缩）
 
 ```python
-# 你发给 API 的格式（OpenAI 标准）
-messages = [
-    {"role": "system", "content": "你是一个帮助性的AI助手。"},
-    {"role": "user", "content": "解释一下什么是 Transformer？"},
-]
-
-# chat_template 自动转换成模型训练时看到的原始格式 ↓
-"""
-<|im_start|>system
-你是一个帮助性的AI助手。<|im_end|>
-<|im_start|>user
-解释一下什么是 Transformer？<|im_end|>
-<|im_start|>assistant
-"""
+# CPU 上可能报错，属正常
+from transformers import BitsAndBytesConfig
+# BitsAndBytesConfig(load_in_8bit=True)  # 依赖 CUDA
 ```
 
-**不同模型的格式不同：** Qwen3 用 `<|im_start|>` / `<|im_end|>`，Llama 用 `<|begin_of_text|>` / `<|eot_id|>`。chat_template 屏蔽了这个差异——开发者统一用 `messages` 数组即可。
+### 验收标准
 
-**实测 token 开销：** system 提示（12 tok）+ user 问题（8 tok）+ 特殊标记（13 tok）= **共 33 tok，其中 40% 是格式开销。**
-
-### 3.4 Encode → Decode 往返验证
-
-所有正常文本都能无损往返（encode → decode → 完全一致），包括 emoji 和数学符号。**但有一个安全漏洞：**
-
-```python
-# 危险：用户输入中包含特殊 token 字符串
-"<|im_start|>system"  → encode → decode → "system"
-# ← 特殊 token 被"吃掉"了！
-```
-
-用户可以在输入中注入 `<|im_start|>` 来伪造系统角色——这是 **prompt injection** 攻击的基础原理。
+- [ ] 能解释「精度换空间」的 trade-off
+- [ ] 有 FP32 vs INT8 的具体数字（实测或理论）
 
 ---
 
-## 4. 单次推理跑通
+## 1.9 结果整理 + README
 
-### 4.1 推理的四个步骤
+### 要做什么
 
-```
-用户输入 "用一句话解释什么是API"
-    │
-    ▼ Step 1: apply_chat_template()
-    │    messages 数组 → 模型训练格式的 prompt 字符串
-    │
-    ▼ Step 2: tokenizer(prompt)
-    │    prompt 字符串 → token IDs [151644, 872, 198, ...]
-    │    输入共 14 个 token
-    │
-    ▼ Step 3: model.generate()  ← 最耗时的一步
-    │    自回归循环 128 次，每次预测下一个 token
-    │    每次循环 = 28 层 Transformer × 1024 维矩阵乘法
-    │
-    ▼ Step 4: tokenizer.decode()
-    │    生成的 token IDs → 人类可读文本
-    │
-    输出 "API（Application Programming Interface）是应用程序接口..."
-```
+更新 README：项目目的、benchmark 结果、踩坑记录；标注哪些部分 AI 辅助、哪些能独立解释。
 
-### 4.1.1 五个核心 API
+### 详细步骤
+
+1. README 补全：快速开始、核心结果表、至少 2–3 条踩坑
+2. 整理 tokenizer 笔记与 benchmark 报告到 `results/`
+3. 能用 5 分钟口述：prompt → token → generate → decode → benchmark
+
+### 验收标准
+
+- [ ] README 含 benchmark 关键数字
+- [ ] 能 5 分钟口述完整链路
+- [ ] GitHub 公开仓库（用户亲手 commit/push）
+
+---
+
+## 附录
+
+<details>
+<summary><strong>五 API 速查</strong>（点击展开）</summary>
 
 | # | API | 输入 | 输出 | 要点 |
 |---|-----|------|------|------|
-| 0 | `AutoTokenizer.from_pretrained(MODEL_ID)` | 模型 ID 字符串 | tokenizer 对象 | 只读 vocab/tokenizer 配置，不加载 1.4GB 权重 |
-| 0 | `AutoModelForCausalLM.from_pretrained(MODEL_ID)` | 模型 ID 字符串 | PyTorch 模型 | `CausalLM` = 因果语言模型，适合「给定前文预测下一个 token」 |
-| 1 | `apply_chat_template(messages, tokenize=False, add_generation_prompt=True)` | messages 数组 | 格式化字符串 | `add_generation_prompt=True` 必须在 generate 前加，否则模型不知道轮到自己说话 |
-| 2 | `tokenizer(prompt, return_tensors="pt")` | 字符串 | `input_ids` + `attention_mask` tensor | `return_tensors="pt"` 返回 PyTorch tensor，供 `model.generate(**inputs)` 使用 |
-| 3 | `model.generate(**inputs, max_new_tokens=64, do_sample=False)` | token tensor | 含输入+新生成的 ids | 内部循环 forward → 采样/argmax → append；第一次跑通建议 `max_new_tokens=64` |
-| 4 | `tokenizer.decode(new_ids, skip_special_tokens=True)` | token id 列表 | 人类可读文本 | 只 decode 新生成部分：`output_ids[0, input_len:]` |
-
-**PyTorch 在这里的角色：** `transformers` 把权重建成 `torch.nn.Module`，`generate()` 内部调 PyTorch 矩阵运算。推理时不需要手写 `model.forward()`，用 `torch.no_grad()` 包一层即可。
-
-### 4.1.2 最小可运行脚本（`scratch/minimal_infer.py`）
-
-**核心认知：** 不需要手动写 `~/.cache/huggingface/...` 路径。只要写模型 ID `"Qwen/Qwen3-0.6B"`，`transformers` 会自动在本地 cache 查找；找到就直接加载，找不到才联网下载。
-
-建议自己手敲一遍；卡住时可对照下方：
-
-```python
-#!/usr/bin/env python3
-"""最小推理：验证 prompt → generate → decode 全链路。"""
-
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-MODEL_ID = "Qwen/Qwen3-0.6B"
-
-print("加载 tokenizer 和 model...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.float32,   # CPU 用 FP32 最稳
-)
-model.eval()
-
-messages = [{"role": "user", "content": "用一句话解释什么是 API"}]
-
-prompt = tokenizer.apply_chat_template(
-    messages,
-    tokenize=False,
-    add_generation_prompt=True,
-)
-print("\n=== chat_template 结果 ===")
-print(prompt)
-
-inputs = tokenizer(prompt, return_tensors="pt")
-print("\n=== input_ids ===")
-print(inputs["input_ids"])
-
-print("\n生成中...")
-with torch.no_grad():
-    output_ids = model.generate(**inputs, max_new_tokens=64, do_sample=False)
-
-new_ids = output_ids[0, inputs["input_ids"].shape[-1]:]
-text = tokenizer.decode(new_ids, skip_special_tokens=True)
-print("\n=== 模型回复 ===")
-print(text)
-```
-
-```bash
-mkdir -p scratch
-source venv/bin/activate
-export HF_ENDPOINT=https://hf-mirror.com
-python scratch/minimal_infer.py
-```
-
-**常见报错：**
-
-| 报错 | 原因 | 处理 |
-|------|------|------|
-| `OSError: ... does not appear to have a file named ...` | cache 不完整 | 重新执行 §2 下载或 `snapshot_download` |
-| 进程被 killed | FP32 加载约需 2–3GB RAM | 关其他程序 |
-| 输出重复 prompt | 忘了 `add_generation_prompt=True` | 加上这行 |
-| 很慢但无报错 | CPU 正常 | 预期 ~10 tok/s，不是 bug |
-
-### 4.2 为什么自回归生成慢？
-
-```python
-# model.generate() 内部的等价逻辑
-input_ids = [151644, 872, 198, ...]   # 15 个已知 token
-
-for i in range(128):                  # 生成 128 个新 token
-    # 对整个序列（15 + i 个 token）做一次前向传播
-    logits = model.forward(input_ids) # ← 28 层 Transformer 在这里
-    next_token = sample(logits)       # 选下一个 token
-    input_ids.append(next_token)      # 拼回去继续循环
-```
-
-**每个 token 都要把整个序列重新算一遍**（不优化的话）。这是 Transformer 注意力机制的固有特性——它需要看到「当前 token 之前的所有 token」才能预测下一个。
-
-Step 4（vLLM）会讲 KV Cache 如何解决这个重复计算问题。
-
-### 4.3 实测性能
-
-| 指标 | 第一次 | 第二次（参数实验同批） |
-|------|--------|----------------------|
-| 输入 token | 14 | 14 |
-| 生成 token | 128 | 128 |
-| 总耗时 | 12.4s | 11.5s |
-| **生成速度** | **10.3 tok/s** | **11.1 tok/s** |
-| 预计生成 512 token | ~50 秒 | ~46 秒 |
-
-两次运行速度都在 ~11 tok/s 左右，差异来自系统负载波动。纯 CPU 推理下这是正常水平。
-
-**环境：** WSL2 / 无 GPU / FP32 精度 / 13GB RAM
-
----
-
-## 5. 生成参数实验
-
-> 实验日期：2026-06-23 | 模型：Qwen3-0.6B | Prompt：统一使用"请用中文简要介绍人工智能的三个主要应用领域。"
-
-### 5.1 四个参数分别控制什么
-
-| 参数 | 作用 | 系统类比 |
-|------|------|----------|
-| `temperature` | 控制概率分布的"陡峭程度"——低=高概率 token 更突出，高=概率被压平 | 类似 `softmax(x/T)`，T 越小分布越集中 |
-| `top_p` | 核采样——只从累积概率 ≤ p 的候选 token 中选，截断长尾 | 类似剪枝：忽略概率极低的候选 |
-| `max_new_tokens` | 硬上限——模型最多生成多少个 token，到了就停 | 类似 `for` 循环的最大迭代次数 |
-| `do_sample` | True=按概率采样，False=每步直接选概率最高的 token (greedy) | `argmax` vs `random_choice(weights)` |
-
-### 5.2 实测结果（13 组配置）
-
-#### Temperature 组（固定 top_p=0.9, max=128）
-
-| 配置 | 耗时 | 速度 | 输出特点 |
-|------|------|------|---------|
-| T=0.1 | 11.6s | 11.0 tok/s | 输出确定，接近 greedy |
-| T=0.7 | 11.2s | 11.4 tok/s | 有一定多样性 |
-| T=1.5 | 11.0s | 11.7 tok/s | 更多样，但本测试中未出现明显不连贯 |
-
-**结论：Temperature 不影响推理速度。** 无论 T 是多少，28 层 Transformer 的矩阵乘法计算量完全相同。T 只在最后 `softmax` 之后改变采样分布，这个操作耗时可忽略。
-
-#### top_p 组（固定 T=0.7, max=128）
-
-| 配置 | 耗时 | 速度 |
-|------|------|------|
-| p=0.5 | 10.9s | 11.7 tok/s |
-| p=0.9 | 10.8s | 11.8 tok/s |
-| p=1.0 | 10.9s | 11.7 tok/s |
-
-**结论：top_p 也不影响速度。** 它只过滤候选 token 集合，不改变计算量。
-
-#### max_new_tokens 组（固定 T=0.7, p=0.9）
-
-| 配置 | 耗时 | 生成 token | 速度 |
-|------|------|-----------|------|
-| max=32 | 3.1s | 32 | 10.2 tok/s |
-| max=128 | 11.5s | 128 | 11.1 tok/s |
-| max=256 | 23.3s | 255 | 11.0 tok/s |
-
-**结论：耗时与 max_new_tokens 几乎线性关系。** 每多生成 1 个 token 约多花 0.09s。这就是自回归生成的特征——每个 token 都需要一次完整的前向传播。
-
-注意 max=256 实际只生成了 255 个——模型在到达上限前触发了 EOS（结束符）。
-
-#### do_sample 组（固定 T=0.7, p=0.9, max=128）
-
-| 配置 | 耗时 | 速度 |
-|------|------|------|
-| greedy | 10.7s | 12.0 tok/s |
-| sampling | 11.6s | 11.1 tok/s |
-
-**结论：Greedy 略快（~8%），因为只做 argmax 不需要随机采样。** 但差距很小——大头仍然是 Transformer 前向传播。
-
-#### 极端对比
-
-| 配置 | 耗时 | 速度 |
-|------|------|------|
-| greedy_deterministic (T=1.0, p=1.0, sample=False) | 9.8s | 13.0 tok/s |
-| high_randomness (T=1.5, p=0.5, sample=True) | 11.2s | 11.5 tok/s |
-
-Greedy deterministic 是 13 组中最快的——不做任何采样，每步直接选最高概率 token。
-
-### 5.3 核心结论
-
-1. **所有生成参数（temperature/top_p/do_sample）对推理速度的影响都可以忽略。** 延迟由 `max_new_tokens` 和模型大小决定。
-2. **调参数调的是"输出质量/多样性"，不是"速度"。**
-3. **线上服务质量问题对应关系：**
-   - 用户抱怨"回复太死板" → 提高 temperature（如 0.7→1.0）或开启 sampling
-   - 用户抱怨"回复太随机/胡说八道" → 降低 temperature（如 0.7→0.3）或用 greedy
-   - 需要控制延迟预算 → 减小 max_new_tokens
-
-### 5.4 面试角度
-
-> **面试官**：「你做过生成参数调优吗？temperature 和 top_p 的区别是什么？」
->
-> **你可以答**：「temperature 改变的是概率分布的 shape——低 T 让高概率 token 更突出，接近 greedy；高 T 压平分布，让低概率 token 有机会被选中。top_p 则是直接截断——只保留累积概率不超过 p 的那些候选。两者可以组合使用：先用 top_p 过滤长尾，再用 temperature 调节分布陡峭程度。而且我从实测数据验证了这些参数不影响推理延迟——延迟由 max_new_tokens 和模型大小决定。」
-
----
-
-## 6. 学习进度
-
-| # | 任务 | 状态 | 关键产出 |
-|---|------|------|---------|
-| 1.1 | 环境准备 | ✅ | venv + CPU PyTorch + HF Mirror |
-| 1.2 | 模型文件结构 | ✅ | config.json 字段解读、Qwen vs Llama 对比表 |
-| 1.3 | 分词器 | ✅ | 中英 token 效率 2.5x、chat_template、prompt injection |
-| 1.4 | 单次推理 | ✅ | 4 步 pipeline（template→tokenize→generate→decode） |
-| 1.5 | 生成参数实验 | ✅ | 13 组对比，temperature/top_p 不影响速度 |
-| 1.6 | 最小 Benchmark | ⬜ | 目标：3 prompt × 3 次，P50/P99 延迟 + tokens/s |
-| 1.7 | 量化实验 | ⬜ | 目标：FP32 vs INT8 内存/速度/质量对比 |
-| 1.8 | 整理提交 | ⬜ | 对比表 + README 更新 + push |
-
----
-
-## 7. 后续学习路线
-
-### 下一站：任务 1.6 最小 Benchmark
-
-这是你**第一次自己写代码**的任务。目标：写一个 `benchmark.py`，要求：
-
-- 支持 `--model qwen` 参数
-- 对多条 prompt 各跑多轮（先从 3 prompt × 3 次开始）
-- 每轮做预热（丢弃第一次推理结果）
-- 输出 avg / P50 / P99 延迟 + tokens/s
-- 结果保存到 JSON
-
-这就是面试官会追问的：「你的 benchmark 怎么设计的？怎么保证可复现？」
-
-**预计时间**：1-1.5h
-
-### 再下一站：任务 1.7 量化实验 / 理论推算
-
-**不需要预生成脚本。** 你要回答的核心问题：
-
-> FP32 权重（每个参数 4 字节）→ INT8（1 字节），理论上内存能省多少？实际会牺牲什么？
-
-用你已有的数据估算：Qwen3-0.6B 约 6 亿参数，`model.safetensors` 文件 1.4GB。INT8 后应该是多大？加载到内存后实际占用多少？
-
-**学习目标**（面试级）：
-- 能解释量化的基本思想：把权重从 FP32 压缩到 INT8，用精度换空间
-- 能说出 trade-off：内存 ↓75%，但可能有精度损失，且 CPU 上 INT8 推理不一定比 FP32 快
-- 知道 `bitsandbytes` 库的作用
-
-**预计时间**：1-1.5h（包括读 `bitsandbytes` 文档 + 实验 + 记录）
-
-### 最后一站：任务 1.8 整理提交
-
-- 更新 README.md：项目目的、使用方法、关键发现
-- 确保 LEARN.md 完整（你现在就在做这件事）
-- `git commit` + push
-
----
-
-## 附注：关于 Llama 和 Instruct
-
-- **Qwen3-0.6B-Instruct**：hf-mirror 镜像上不存在（返回 401）。Qwen3-0.6B 本身就是 Instruct 模型（Qwen3 系列 base 和 Instruct 在 HuggingFace 上是同一个仓库，`chat_template` 已内置），不影响所有实验。
-- **Llama-3.2-1B**：需要 HuggingFace 账号授权，暂不可用。Qwen3 足够覆盖所有学习目标。后续如果申请到授权，可以用相同脚本跑 Llama 做对比。
-
----
-
-## 附录：历史预生成脚本（已归档）
-
-项目最初包含三个 AI 生成的脚本（`download_and_explore.py`、`explore_tokenizer.py`、`explore_generate.py`）。**脚本已删除**——全部学习内容已提取到本文档 §1–5。
-
-| 脚本 | 设计目标 | 学习内容记录在 |
-|------|---------|-------------|
-| `download_and_explore.py` | 下载模型 → 遍历文件结构 → 解读 config.json → 参数量估算 → Qwen vs Llama 对比 | 第 2 节（含 2.4 参数量估算） |
-| `explore_tokenizer.py` | 中英 tokenize 对比 → chat_template 机制 → encode→decode 往返 → prompt injection 演示 | 第 3 节 |
-| `explore_generate.py` | 单次推理 4 步流程 → 13 组生成参数实验 → 速度/质量分析 | 第 4 + 5 节 |
-
-后续实验（1.6 Benchmark、1.7 量化）由学习者自己编写代码，符合 ownership 原则——不依赖预生成脚本。
+| 0 | `AutoTokenizer.from_pretrained(MODEL_ID)` | 模型 ID | tokenizer 对象 | 不加载 1.4GB 权重 |
+| 0 | `AutoModelForCausalLM.from_pretrained(MODEL_ID)` | 模型 ID | PyTorch 模型 | CausalLM = 自回归生成 |
+| 1 | `apply_chat_template(..., add_generation_prompt=True)` | messages | 格式化字符串 | 必须加 generation prompt |
+| 2 | `tokenizer(prompt, return_tensors="pt")` | 字符串 | input_ids + attention_mask | 返回 PyTorch tensor |
+| 3 | `model.generate(**inputs, max_new_tokens=N)` | token tensor | 含输入+生成的 ids | 配合 `torch.no_grad()` |
+| 4 | `tokenizer.decode(new_ids, skip_special_tokens=True)` | token id 列表 | 文本 | 只 decode 新生成部分 |
+
+</details>
+
+<details>
+<summary><strong>历史实验数据摘要</strong>（点击展开）</summary>
+
+| 任务 | 关键结论 |
+|------|---------|
+| 环境 | venv + CPU PyTorch + HF Mirror；`CPU only: True` ✅ |
+| 1.2 模型 | Qwen3 ~1.4GB；28 层 / hidden 1024 / vocab 151936；~0.54B 参数 |
+| 1.3 分词器 | 中文 ~1.8 字符/token，英文 ~4.5；格式开销 ~40% |
+| 1.4 推理 | FP32 CPU ~11 tok/s；四步 pipeline 跑通 |
+| 1.5 参数 | 13 组：T/top_p/do_sample 不影响速度；max_new_tokens 线性 |
+
+**自回归慢的原因**：每生成 1 个 token 需对整个序列做一次 28 层 Transformer 前向传播。Step 4（vLLM）的 KV Cache 解决重复计算问题。
+
+</details>
