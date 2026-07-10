@@ -10,23 +10,23 @@
 
 | # | 任务（对齐计划 4.6） | 状态 |
 |---|------|------|
-| **1.1** | **最小推理链路复现（`minimal_infer.py`）** | **⬜ ← 当前** |
+| 1.1 | 最小推理链路复现（`minimal_infer.py`） | ✅ |
 | 1.2 | 模型文件结构 | ✅ |
 | 1.3 | 分词器显微镜 | ✅ |
 | 1.4 | 单次推理跑通 | ✅ |
 | 1.5 | 生成参数实验 | ✅ |
-| 1.6 | Benchmark 最小版（3 prompt × 3 次） | ⬜ |
+| **1.6** | **Benchmark 最小版（3 prompt × 3 次）** | **✅ ← 当前** |
 | 1.7 | 双模型对比（Qwen vs Llama） | ⬜ |
 | 1.8 | 量化实验 / 理论推算 | ⬜ |
 | 1.9 | 结果整理 + README | ⬜ |
 
 **停止条件**（下面 3 件事讲不清，不继续新增功能）：
 
-1. `apply_chat_template()` 做了什么；
-2. `model.generate()` 的输入输出是什么；
-3. benchmark 的 P50/P99 是怎么算出来的。
+1. `apply_chat_template()` 做了什么；✅
+2. `model.generate()` 的输入输出是什么；✅
+3. benchmark 的 P50/P99 是怎么算出来的。✅
 
-**当前目录**（脚本在项目根目录，直接 `python minimal_infer.py`）：
+**当前目录**（脚本在项目根目录，直接 `python benchmark.py`）：
 
 ```text
 hf-llm-benchmark/
@@ -34,7 +34,7 @@ hf-llm-benchmark/
 ├── LEARN.md              ← 本文件
 ├── requirements.txt
 ├── minimal_infer.py      ← 任务 1.1
-├── benchmark.py          ← 任务 1.6（后续）
+├── benchmark.py          ← 任务 1.6
 └── venv/
 ```
 
@@ -373,30 +373,44 @@ for text in ["你好，今天天气怎么样？", "Explain API in one sentence."
 ### 详细步骤
 
 ```bash
-python benchmark.py --model qwen
-# 产出：results/benchmark_3x3.json
+python benchmark.py
 ```
+
+**实测结果（2026-07-10，CPU FP32）**：
+
+| prompt | avg(s) | P50(s) | P99(s) | tok/s |
+|--------|--------|--------|--------|-------|
+| 短问答 | 19.29 | 18.26 | 21.75 | 12.1 |
+| 中翻译 | 14.10 | 13.86 | 15.08 | 12.3 |
+| 长总结 | 36.28 | 36.82 | 41.14 | 11.6 |
+
+**关键发现**：
+- FP32 CPU 稳定 **~12 tok/s**（略高于预估的 10–11）
+- `do_sample=True` 默认——同 prompt 重复 3 次 token 数可能波动（可见 214–260 等），但 tok/s 稳定
+- P99 > avg > P50，长尾由首次/偶发波动贡献
+- 预热后首次仍可能略慢（内存页填充），但整体偏差在可接受范围
 
 **设计要点**：
 
 1. 预热 1 次，丢弃（首次加载 cache 慢，不代表稳态）
 2. 记录每次 wall time 和生成 token 数
 3. P50 = 中位数，P99 = 第 99 百分位
-4. tokens/s = 生成 token 总数 / 总耗时
+4. tokens/s = 生成 token 总数 / 总耗时（不含输入 token）
+5. `max_new_tokens=4096`（大值，靠 EOS 自然终止），各 prompt 按任务复杂度自然产生不同生成长度
 
-**CPU 预期**：Qwen3-0.6B FP32 约 **10–11 tok/s**；生成 512 token 约 50s。
+### 踩坑记录
 
-### 可能遇到的问题
-
-| 现象 | 原因 | 处理 |
-|------|------|------|
-| 首次极慢 | 冷启动 + cache | 预热后丢弃 |
-| 150 次跑 5h+ | prompt 数 × 次数太多 | 先 3×3 出数据，再扩展 |
+| 坑 | 现象 | 原因 | 解决 |
+|----|------|------|------|
+| 首次推理慢 | 比稳态慢 20%+ | 内存页填充、Python JIT 冷路径 | 预热一次，丢弃 |
+| `do_sample=True` 导致 tok 数不稳定 | 同 prompt 重复 3 次 token 数差 15% | 采样天然随机 | tok/s 用 total_tok / total_time 算，不受单次影响 |
+| `from datetime import datetime` 未使用 | IDE 无告警，但代码有 dead import | 删了时间戳打印 | 移除 import |
 
 ### 验收标准
 
-- [ ] 能口述 P50/P99 计算方式
-- [ ] 输出含 avg / P50 / P99 / tokens/s
+- [x] 能口述 P50/P99 计算方式
+- [x] 输出含 avg / P50 / P99 / tokens/s
+- [x] 实测 tok/s ~12，与 EST 一致
 
 ---
 
@@ -507,6 +521,7 @@ from transformers import BitsAndBytesConfig
 | 1.3 分词器 | 中文 ~1.8 字符/token，英文 ~4.5；格式开销 ~40% |
 | 1.4 推理 | FP32 CPU ~11 tok/s；四步 pipeline 跑通 |
 | 1.5 参数 | 13 组：T/top_p/do_sample 不影响速度；max_new_tokens 线性 |
+| 1.6 benchmark | 3 prompt × 3 次；FP32 CPU ~12 tok/s；P50/P99 统计正常 |
 
 **自回归慢的原因**：每生成 1 个 token 需对整个序列做一次 28 层 Transformer 前向传播。Step 4（vLLM）的 KV Cache 解决重复计算问题。
 
